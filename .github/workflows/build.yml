@@ -43,6 +43,11 @@ jobs:
           fi
           test -f app-src/scripts/fetch-deps.sh
 
+      - name: Nomor versi otomatis
+        run: |
+          echo "APP_VERSION_CODE=$(( $(date +%s) / 60 ))" >> "$GITHUB_ENV"
+          echo "APP_VERSION_NAME=1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -77,4 +82,3 @@ jobs:
         with:
           name: CocoteTunnel-apk
           path: app-src/app/build/outputs/apk/release/*.apk
-          
