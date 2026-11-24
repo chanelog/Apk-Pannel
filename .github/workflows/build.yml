@@ -1,1 +1,80 @@
+name: Build APK dari Panel
 
+# Repo GitHub ini hanya berisi file ini. Source aplikasi diunduh dari web panel
+# (cocote.tytyd.eu.cc) setiap kali build berjalan.
+#
+# Pengaturan di GitHub (Settings -> Secrets and variables -> Actions):
+#   Variables : SRC_URL    = https://cocote.tytyd.eu.cc/r/<repo>/cocote-tunnel.zip
+#   Secrets   : PANEL_TOKEN = (opsional, isi jika repo panel privat)
+#               KEYSTORE_B64 / KS_PASS / KEY_ALIAS / KEY_PASS = (opsional, jika memakai keystore sendiri)
+
+on:
+  workflow_dispatch:
+    inputs:
+      src_url:
+        description: "URL zip source (kosongkan untuk memakai variabel SRC_URL)"
+        required: false
+  repository_dispatch:
+    types: [build-apk]
+
+jobs:
+  apk:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Unduh source dari panel
+        env:
+          INPUT_URL: ${{ github.event.inputs.src_url || github.event.client_payload.src_url }}
+          VAR_URL: ${{ vars.SRC_URL }}
+          PANEL_TOKEN: ${{ secrets.PANEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          URL="${INPUT_URL:-$VAR_URL}"
+          if [ -z "$URL" ]; then echo "SRC_URL belum diisi"; exit 1; fi
+          AUTH=()
+          if [ -n "${PANEL_TOKEN:-}" ]; then AUTH=(-H "Authorization: Bearer $PANEL_TOKEN"); fi
+          curl -fSL --retry 3 "${AUTH[@]}" "$URL" -o src.zip
+          ls -l src.zip
+          unzip -q src.zip -d src
+          # dukung zip yang punya satu folder teratas maupun tidak
+          if [ "$(ls -1 src | wc -l)" = "1" ] && [ -d "src/$(ls -1 src)" ]; then
+            mv "src/$(ls -1 src)" app-src
+          else
+            mv src app-src
+          fi
+          test -f app-src/scripts/fetch-deps.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Ambil dependensi native (hev-socks5-tunnel, xray, dnstt)
+        working-directory: app-src
+        run: bash scripts/fetch-deps.sh
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build APK release
+        working-directory: app-src
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain assembleRelease 2>&1 | tee build.log
+
+      - name: Ringkasan error
+        if: failure()
+        working-directory: app-src
+        run: |
+          echo "===== ERROR KOTLIN / RESOURCE ====="
+          grep -nE "^e: |error:|AAPT|Execution failed|What went wrong" -A3 build.log | head -80
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CocoteTunnel-apk
+          path: app-src/app/build/outputs/apk/release/*.apk
+          
